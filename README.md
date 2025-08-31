@@ -13,7 +13,18 @@ The VeliKey Python SDK provides a comprehensive interface for managing quantum-s
 ### Installation
 
 ```bash
+# Install from PyPI
 pip install velikey
+
+# Install with optional dependencies
+pip install "velikey[dev]"        # Development tools
+pip install "velikey[docs]"       # Documentation generation
+pip install "velikey[all]"        # All optional dependencies
+
+# Install from source
+git clone https://github.com/velikey/velikey-python-sdk.git
+cd velikey-python-sdk
+pip install -e .
 ```
 
 ### Basic Usage
@@ -23,29 +34,78 @@ import asyncio
 from velikey import AegisClient
 
 async def main():
-    # Initialize client
-    client = AegisClient(api_key="your-api-key")
+    # Initialize client with API key
+    client = AegisClient(api_key="sk_prod_your-api-key-here")
     
-    # Quick setup for new customers
-    setup = await client.quick_setup(
-        compliance_framework="soc2",
-        enforcement_mode="observe",
-        post_quantum=True
-    )
-    print(f"✅ Created policy: {setup.policy_name}")
-    
-    # Monitor security status
-    status = await client.get_security_status()
-    print(f"🛡️ Health Score: {status.health_score}/100")
-    
-    # List and manage agents
-    agents = await client.agents.list()
-    print(f"🤖 Found {len(agents)} agents")
-    
-    await client.close()
+    try:
+        # Quick setup for new customers
+        setup = await client.quick_setup(
+            compliance_framework="soc2",
+            enforcement_mode="observe",
+            post_quantum=True
+        )
+        print(f"✅ Created policy: {setup.policy_name}")
+        
+        # Monitor security status
+        status = await client.get_security_status()
+        print(f"🛡️ Health Score: {status.health_score}/100")
+        print(f"📊 Agents Online: {status.agents_online}")
+        print(f"🚨 Critical Alerts: {status.critical_alerts}")
+        
+        # List and manage agents
+        agents = await client.agents.list()
+        print(f"🤖 Found {len(agents)} agents")
+        
+        # Show agent details
+        for agent in agents[:3]:  # Show first 3 agents
+            print(f"  • {agent.name}: {agent.status} (v{agent.version})")
+        
+        # Check compliance status
+        compliance = await client.compliance.validate_framework("soc2")
+        print(f"✅ SOC2 Compliance: {'PASS' if compliance.compliant else 'FAIL'}")
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+    finally:
+        await client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
+
+### Quick Configuration Examples
+
+**Environment Variables:**
+```python
+import os
+from velikey import AegisClient
+
+# Using environment variables
+client = AegisClient(
+    api_key=os.getenv("VELIKEY_API_KEY"),
+    base_url=os.getenv("VELIKEY_BASE_URL", "https://api.velikey.com")
+)
+```
+
+**Configuration File:**
+```python
+import yaml
+from velikey import AegisClient
+
+# Load from configuration file
+with open("velikey-config.yaml") as f:
+    config = yaml.safe_load(f)
+
+client = AegisClient(**config["velikey"])
+```
+
+```yaml
+# velikey-config.yaml
+velikey:
+  api_key: "sk_prod_your-api-key"
+  base_url: "https://aegis.yourcompany.com:8443"
+  timeout: 30
+  retry_count: 3
 ```
 
 ### Synchronous Usage
@@ -70,11 +130,13 @@ client.close()
 # Create from compliance template
 policy = await client.policies.create_from_template(
     template="soc2",
+    name="SOC2 Production Policy",
     enforcement_mode="enforce",
     post_quantum=True
 )
+print(f"Created policy: {policy.name} (ID: {policy.id})")
 
-# Custom policy builder
+# Custom policy builder with advanced configuration
 from velikey import PolicyBuilder
 
 builder = PolicyBuilder()
@@ -82,15 +144,50 @@ policy_config = builder \
     .compliance_standard("Custom Security Policy") \
     .post_quantum_ready() \
     .enforcement_mode("enforce") \
+    .tls_config({
+        "min_version": "1.2",
+        "preferred_ciphers": [
+            "TLS_AES_256_GCM_SHA384",
+            "TLS_KYBER768_P256_SHA256"
+        ],
+        "required_extensions": ["server_name", "supported_groups"]
+    }) \
+    .compliance_rules({
+        "audit_logging": True,
+        "data_retention_days": 90,
+        "encryption_at_rest": True
+    }) \
     .build()
 
-policy = await client.policies.create("My Policy", policy_config["rules"])
+policy = await client.policies.create("My Custom Policy", policy_config["rules"])
 
-# Deploy to specific agents
-await client.policies.deploy(policy.id, target_agents=["agent-1", "agent-2"])
+# Deploy to specific agents with staged rollout
+deployment = await client.policies.deploy(
+    policy.id, 
+    target_agents=["agent-1", "agent-2"],
+    rollout_strategy="staged",
+    rollout_percentage=25  # Start with 25% of agents
+)
 
+# Monitor deployment progress
+while deployment.status == "in_progress":
+    await asyncio.sleep(5)
+    deployment = await client.policies.get_deployment(deployment.id)
+    print(f"Deployment progress: {deployment.progress}%")
+
+# Promote to full rollout if successful
+if deployment.status == "staged_success":
+    await client.policies.promote_deployment(deployment.id)
+    
 # Rollback if needed
-await client.policies.rollback(policy.id)
+if deployment.status == "failed":
+    await client.policies.rollback(policy.id)
+    print("Deployment rolled back due to failures")
+
+# Policy versioning and history
+versions = await client.policies.list_versions(policy.id)
+for version in versions:
+    print(f"Version {version.version}: {version.created_at} - {version.status}")
 ```
 
 ### 🤖 Agent Management
@@ -249,43 +346,241 @@ async def deploy_policy(
 ```python
 from celery import Celery
 from velikey import AegisClientSync
+import logging
+import json
+from datetime import datetime
 
 app = Celery('security_tasks')
+logger = logging.getLogger(__name__)
 
-@app.task
-def check_compliance_status():
-    """Periodic compliance check task."""
+@app.task(bind=True, max_retries=3)
+def check_compliance_status(self):
+    """Periodic compliance check task with retry logic."""
     client = AegisClientSync(api_key=os.getenv("VELIKEY_API_KEY"))
     
     try:
         # Check all compliance frameworks
-        frameworks = ["soc2", "pci-dss", "hipaa"]
-        results = {}
+        frameworks = ["soc2", "pci-dss", "hipaa", "gdpr"]
+        results = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "frameworks": {}
+        }
         
         for framework in frameworks:
-            compliance = client.compliance.validate_framework(framework)
-            results[framework] = {
-                "compliant": compliance.compliant,
-                "score": compliance.score,
-                "issues": compliance.issues
-            }
+            try:
+                compliance = client.compliance.validate_framework(framework)
+                results["frameworks"][framework] = {
+                    "compliant": compliance.compliant,
+                    "score": compliance.score,
+                    "issues": compliance.issues,
+                    "evidence_count": len(compliance.evidence),
+                    "last_updated": compliance.last_updated
+                }
+                
+                # Alert on compliance failures
+                if not compliance.compliant:
+                    send_compliance_alert(framework, compliance.issues)
+                    
+            except Exception as framework_error:
+                logger.error(f"Failed to check {framework}: {framework_error}")
+                results["frameworks"][framework] = {
+                    "error": str(framework_error),
+                    "compliant": False
+                }
         
         # Send results to monitoring system
         send_compliance_metrics(results)
         
+        # Store results in database
+        store_compliance_results(results)
+        
+        # Generate alerts for degraded compliance
+        overall_compliance = calculate_overall_compliance(results)
+        if overall_compliance < 0.85:  # 85% threshold
+            send_alert(
+                level="warning",
+                message=f"Overall compliance below threshold: {overall_compliance:.1%}"
+            )
+        
+        return results
+        
     except Exception as e:
-        # Log error and alert ops team
-        log_error(f"Compliance check failed: {e}")
+        logger.error(f"Compliance check failed: {e}")
+        # Retry with exponential backoff
+        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
     finally:
         client.close()
 
-# Schedule the task
+@app.task(bind=True)
+def automated_policy_deployment(self, policy_id, target_filter="env=production"):
+    """Automated policy deployment with safety checks."""
+    client = AegisClientSync(api_key=os.getenv("VELIKEY_API_KEY"))
+    
+    try:
+        # Pre-deployment health check
+        health = client.get_security_status()
+        if health.health_score < 80:
+            raise Exception(f"System health too low for deployment: {health.health_score}")
+        
+        # Get agents matching target filter
+        agents = client.agents.list(filter=target_filter)
+        if len(agents) == 0:
+            raise Exception(f"No agents found matching filter: {target_filter}")
+        
+        logger.info(f"Deploying policy {policy_id} to {len(agents)} agents")
+        
+        # Stage deployment (start with 10% of agents)
+        staging_count = max(1, len(agents) // 10)
+        staging_agents = agents[:staging_count]
+        
+        deployment = client.policies.deploy(
+            policy_id,
+            target_agents=[agent.id for agent in staging_agents],
+            rollout_strategy="staged"
+        )
+        
+        # Monitor staging deployment
+        timeout = 300  # 5 minutes
+        start_time = time.time()
+        
+        while deployment.status == "in_progress":
+            if time.time() - start_time > timeout:
+                client.policies.rollback(policy_id)
+                raise Exception("Staging deployment timed out")
+                
+            time.sleep(10)
+            deployment = client.policies.get_deployment(deployment.id)
+        
+        if deployment.status != "staged_success":
+            raise Exception(f"Staging deployment failed: {deployment.error}")
+        
+        # Verify staging deployment health
+        time.sleep(30)  # Allow metrics to stabilize
+        post_deployment_health = client.get_security_status()
+        
+        if post_deployment_health.health_score < health.health_score - 5:
+            client.policies.rollback(policy_id)
+            raise Exception("Health score degraded after staging deployment")
+        
+        # Promote to full deployment
+        logger.info("Staging successful, promoting to full deployment")
+        full_deployment = client.policies.promote_deployment(deployment.id)
+        
+        # Monitor full deployment
+        while full_deployment.status == "in_progress":
+            if time.time() - start_time > timeout * 3:  # Longer timeout for full deployment
+                client.policies.rollback(policy_id)
+                raise Exception("Full deployment timed out")
+                
+            time.sleep(15)
+            full_deployment = client.policies.get_deployment(full_deployment.id)
+        
+        if full_deployment.status == "success":
+            logger.info(f"Policy {policy_id} successfully deployed to all agents")
+            send_deployment_success_notification(policy_id, len(agents))
+        else:
+            raise Exception(f"Full deployment failed: {full_deployment.error}")
+            
+        return {
+            "policy_id": policy_id,
+            "agents_deployed": len(agents),
+            "deployment_time": time.time() - start_time,
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Policy deployment failed: {e}")
+        send_deployment_failure_notification(policy_id, str(e))
+        raise
+    finally:
+        client.close()
+
+# Enhanced schedule configuration
 app.conf.beat_schedule = {
     'compliance-check': {
         'task': 'check_compliance_status',
         'schedule': 3600.0,  # Every hour
     },
+    'nightly-health-report': {
+        'task': 'generate_health_report',
+        'schedule': crontab(hour=2, minute=0),  # 2 AM daily
+    },
+    'weekly-compliance-report': {
+        'task': 'generate_weekly_compliance_report',
+        'schedule': crontab(day_of_week=1, hour=6, minute=0),  # Monday 6 AM
+    },
 }
+
+# Additional helper tasks
+@app.task
+def generate_health_report():
+    """Generate comprehensive nightly health report."""
+    client = AegisClientSync(api_key=os.getenv("VELIKEY_API_KEY"))
+    
+    try:
+        report = {
+            "date": datetime.utcnow().date().isoformat(),
+            "security_status": client.get_security_status(),
+            "agent_summary": {
+                "total": 0,
+                "online": 0,
+                "offline": 0,
+                "outdated": 0
+            },
+            "policy_summary": {},
+            "compliance_status": {},
+            "alerts": []
+        }
+        
+        # Collect agent statistics
+        agents = client.agents.list()
+        report["agent_summary"]["total"] = len(agents)
+        
+        for agent in agents:
+            if agent.status == "online":
+                report["agent_summary"]["online"] += 1
+            elif agent.status == "offline":
+                report["agent_summary"]["offline"] += 1
+            
+            # Check for outdated agents
+            if agent.version != get_latest_agent_version():
+                report["agent_summary"]["outdated"] += 1
+        
+        # Policy deployment status
+        policies = client.policies.list()
+        for policy in policies:
+            report["policy_summary"][policy.name] = {
+                "status": policy.status,
+                "agents_deployed": len(policy.deployed_agents),
+                "compliance_framework": policy.compliance_framework
+            }
+        
+        # Generate and send report
+        send_health_report(report)
+        store_health_report(report)
+        
+        return report
+        
+    finally:
+        client.close()
+
+def send_compliance_alert(framework, issues):
+    """Send compliance failure alert."""
+    message = f"🚨 {framework.upper()} compliance check failed:\n"
+    for issue in issues[:5]:  # Limit to top 5 issues
+        message += f"• {issue.description}\n"
+    
+    # Send to Slack, email, etc.
+    send_alert(level="critical", message=message)
+
+def calculate_overall_compliance(results):
+    """Calculate overall compliance score."""
+    scores = []
+    for framework_data in results["frameworks"].values():
+        if "score" in framework_data:
+            scores.append(framework_data["score"])
+    
+    return sum(scores) / len(scores) if scores else 0.0
 ```
 
 ## 🧪 Testing
