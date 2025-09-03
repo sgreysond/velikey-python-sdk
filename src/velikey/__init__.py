@@ -1,6 +1,7 @@
 """VeliKey Aegis Python SDK - Quantum-safe crypto policy management."""
 
-from .client import AegisClient
+from .version import __version__
+from .client import AegisClient, AegisClientSync, create_client, create_sync_client
 from .models import (
     Agent,
     Policy,
@@ -19,11 +20,17 @@ from .exceptions import (
     NotFoundError,
 )
 
-__version__ = "0.1.0"
+# Backwards-compatible aliases expected by tests
+Client = AegisClient
+
 __all__ = [
     "AegisClient",
+    "AegisClientSync",
+    "Client",
+    "create_client",
+    "create_sync_client",
     "Agent",
-    "Policy", 
+    "Policy",
     "PolicyTemplate",
     "ComplianceFramework",
     "HealthScore",
@@ -32,7 +39,7 @@ __all__ = [
     "DiagnosticResult",
     "VeliKeyError",
     "AuthenticationError",
-    "ValidationError", 
+    "ValidationError",
     "RateLimitError",
     "NotFoundError",
 ]

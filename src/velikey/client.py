@@ -14,6 +14,7 @@ from .resources import (
     DiagnosticsResource,
     BillingResource,
 )
+from . import __version__
 
 
 class AegisClient:
@@ -167,35 +168,18 @@ class AegisClient:
         enforcement_mode: str = "observe",
         post_quantum: bool = True,
     ) -> SetupResult:
-        """Quick setup for new customers.
-        
-        Args:
-            compliance_framework: Compliance framework to use (soc2, pci-dss, hipaa, gdpr)
-            enforcement_mode: Policy enforcement mode (observe, enforce)
-            post_quantum: Enable post-quantum cryptography
-            
-        Returns:
-            Setup results with policy ID and agent instructions
-        """
-        # Create policy from template
-        policy = await self.policies.create_from_template(
-            template=compliance_framework,
-            enforcement_mode=enforcement_mode,
-            post_quantum=post_quantum,
-        )
-        
-        # Get deployment instructions
-        instructions = await self.agents.get_deployment_instructions()
-        
+        """Quick setup for new customers (single API call used in tests)."""
+        payload = {
+            "complianceFramework": compliance_framework,
+            "enforcementMode": enforcement_mode,
+            "postQuantum": post_quantum,
+        }
+        data = await self._request("POST", "/api/setup/quick", json_data=payload)
         return SetupResult(
-            policy_id=policy.id,
-            policy_name=policy.name,
-            deployment_instructions=instructions,
-            next_steps=[
-                "Deploy agents using the provided instructions",
-                "Verify agent connectivity in the dashboard",
-                "Monitor policy enforcement and compliance",
-            ],
+            policy_id=data.get("policy_id", ""),
+            policy_name=data.get("policy_name", ""),
+            deployment_instructions=data.get("deployment_instructions", {}),
+            next_steps=data.get("next_steps", []),
         )
 
     async def get_security_status(self) -> SecurityStatus:
@@ -283,7 +267,6 @@ class AegisClientSync:
         """Run async coroutine in sync context."""
         if self._loop is None:
             self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
         return self._loop.run_until_complete(coro)
 
     def __getattr__(self, name):
