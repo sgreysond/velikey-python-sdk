@@ -17,8 +17,7 @@ class TestAegisClient:
             base_url="https://api-test.velikey.com"
         )
 
-    @pytest.mark.asyncio
-    async def test_client_initialization(self, client):
+    def test_client_initialization(self, client):
         """Test client initializes correctly."""
         assert client.api_key == "test-api-key"
         assert client.base_url == "https://api-test.velikey.com"
@@ -26,34 +25,31 @@ class TestAegisClient:
         assert hasattr(client, 'policies')
         assert hasattr(client, 'monitoring')
 
-    @pytest.mark.asyncio
-    async def test_authentication_error(self, client):
+    def test_authentication_error(self, client):
         """Test authentication error handling."""
-        with patch.object(client._client, 'request') as mock_request:
+        with patch.object(client._client, 'request', new_callable=AsyncMock) as mock_request:
             mock_response = Mock()
             mock_response.status_code = 401
             mock_response.json.return_value = {"detail": "Unauthorized"}
             mock_request.return_value = mock_response
             
             with pytest.raises(AuthenticationError):
-                await client._request("GET", "/test")
+                asyncio.run(client._request("GET", "/test"))
 
-    @pytest.mark.asyncio
-    async def test_validation_error(self, client):
+    def test_validation_error(self, client):
         """Test validation error handling."""
-        with patch.object(client._client, 'request') as mock_request:
+        with patch.object(client._client, 'request', new_callable=AsyncMock) as mock_request:
             mock_response = Mock()
             mock_response.status_code = 400
             mock_response.json.return_value = {"detail": "Invalid request"}
             mock_request.return_value = mock_response
             
             with pytest.raises(ValidationError):
-                await client._request("POST", "/test", json_data={"invalid": "data"})
+                asyncio.run(client._request("POST", "/test", json_data={"invalid": "data"}))
 
-    @pytest.mark.asyncio
-    async def test_quick_setup(self, client):
+    def test_quick_setup(self, client):
         """Test quick setup functionality."""
-        with patch.object(client, '_request') as mock_request:
+        with patch.object(client, '_request', new_callable=AsyncMock) as mock_request:
             mock_request.return_value = {
                 "policy_id": "test-policy-123",
                 "policy_name": "Test Policy",
@@ -61,55 +57,55 @@ class TestAegisClient:
                 "next_steps": ["Deploy agents", "Verify connectivity"]
             }
             
-            result = await client.quick_setup(
+            result = asyncio.run(client.quick_setup(
                 compliance_framework="soc2",
                 enforcement_mode="observe",
                 post_quantum=True
-            )
+            ))
             
             assert result.policy_id == "test-policy-123"
             assert result.policy_name == "Test Policy"
             assert len(result.next_steps) == 2
 
-    @pytest.mark.asyncio
-    async def test_security_status(self, client):
+    def test_security_status(self, client):
         """Test security status retrieval."""
         # Mock agents.list()
-        with patch.object(client.agents, 'list') as mock_agents:
+        with patch.object(client.agents, 'list', new_callable=AsyncMock) as mock_agents:
             mock_agents.return_value = [
                 Mock(id="agent-1", status="online"),
                 Mock(id="agent-2", status="online"),
             ]
             
             # Mock policies.list()
-            with patch.object(client.policies, 'list') as mock_policies:
+            with patch.object(client.policies, 'list', new_callable=AsyncMock) as mock_policies:
                 mock_policies.return_value = [
                     Mock(id="policy-1", is_active=True),
                 ]
                 
                 # Mock monitoring.get_health_score()
-                with patch.object(client.monitoring, 'get_health_score') as mock_health:
+                with patch.object(client.monitoring, 'get_health_score', new_callable=AsyncMock) as mock_health:
                     mock_health.return_value = Mock(
                         overall_score=85,
                         recommendations=["Enable post-quantum crypto"]
                     )
                     
                     # Mock monitoring.get_active_alerts()
-                    with patch.object(client.monitoring, 'get_active_alerts') as mock_alerts:
+                    with patch.object(client.monitoring, 'get_active_alerts', new_callable=AsyncMock) as mock_alerts:
                         mock_alerts.return_value = []
                         
-                        status = await client.get_security_status()
+                        status = asyncio.run(client.get_security_status())
                         
                         assert status.agents_online == "2/2"
                         assert status.policies_active == 1
                         assert status.health_score == 85
                         assert status.critical_alerts == 0
 
-    @pytest.mark.asyncio
-    async def test_context_manager(self):
+    def test_context_manager(self):
         """Test async context manager usage."""
-        async with AegisClient(api_key="test") as client:
-            assert client.api_key == "test"
+        async def _run():
+            async with AegisClient(api_key="test") as client:
+                assert client.api_key == "test"
+        asyncio.run(_run())
         # Client should be closed after context exit
 
 
@@ -186,27 +182,9 @@ class TestUtilityFunctions:
 class TestIntegration:
     """Integration tests (require actual API or mock server)."""
 
-    @pytest.mark.asyncio
-    async def test_end_to_end_workflow(self):
+    def test_end_to_end_workflow(self):
         """Test complete workflow from setup to monitoring."""
-        # This would run against a test API server
         pytest.skip("Integration test - requires test API server")
-        
-        client = AegisClient(api_key="test-integration-key")
-        
-        # 1. Quick setup
-        setup = await client.quick_setup("soc2")
-        assert setup.policy_id
-        
-        # 2. Verify policy creation
-        policy = await client.policies.get(setup.policy_id)
-        assert policy.name == setup.policy_name
-        
-        # 3. Check security status
-        status = await client.get_security_status()
-        assert status.health_score > 0
-        
-        await client.close()
 
 
 # Fixtures for common test data
