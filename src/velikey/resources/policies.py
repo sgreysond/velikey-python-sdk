@@ -1,8 +1,9 @@
 """Policy management resource."""
 
-from typing import Dict, List, Optional, Any
-from ..models import Policy, PolicyTemplate, ComplianceFramework, PolicyMode
-from ..exceptions import ValidationError
+from typing import Any, Dict, List, Optional
+
+from ..exceptions import NotFoundError, VeliKeyError
+from ..models import ComplianceFramework, Policy, PolicyMode, PolicyTemplate
 
 
 class PoliciesResource:
@@ -10,6 +11,17 @@ class PoliciesResource:
     
     def __init__(self, client):
         self._client = client
+
+    @staticmethod
+    def _unsupported(operation: str) -> VeliKeyError:
+        return VeliKeyError(
+            (
+                f"Unsupported operation: {operation}. "
+                "Current Axis route contract supports listing policies via GET /api/policies "
+                "and rollout execution via /api/rollouts/*."
+            ),
+            status_code=501,
+        )
 
     async def list(self, active_only: bool = True) -> List[Policy]:
         """List customer policies.
@@ -20,9 +32,10 @@ class PoliciesResource:
         Returns:
             List of policies
         """
-        params = {"active_only": active_only} if active_only else {}
+        params = {"isActive": str(active_only).lower()} if active_only else {}
         data = await self._client._request("GET", "/api/policies", params=params)
-        return [Policy(**policy) for policy in data["policies"]]
+        policies = data.get("policies", [])
+        return [Policy(**policy) for policy in policies]
 
     async def get(self, policy_id: str) -> Policy:
         """Get policy by ID.
@@ -33,8 +46,11 @@ class PoliciesResource:
         Returns:
             Policy details
         """
-        data = await self._client._request("GET", f"/api/policies/{policy_id}")
-        return Policy(**data)
+        policies = await self.list(active_only=False)
+        for policy in policies:
+            if str(policy.id) == str(policy_id):
+                return policy
+        raise NotFoundError(f"Policy not found: {policy_id}", status_code=404)
 
     async def create(
         self,
@@ -54,14 +70,7 @@ class PoliciesResource:
         Returns:
             Created policy
         """
-        payload = {
-            "name": name,
-            "rules": rules,
-            "description": description,
-            "enforcement_mode": enforcement_mode,
-        }
-        data = await self._client._request("POST", "/api/policies", json_data=payload)
-        return Policy(**data)
+        raise self._unsupported("policies.create")
 
     async def create_from_template(
         self,
@@ -83,40 +92,7 @@ class PoliciesResource:
         Returns:
             Created policy
         """
-        # Get template
-        template_data = await self.get_template(template)
-        
-        # Apply customizations
-        rules = template_data.algorithms.copy()
-        if post_quantum:
-            # Enable PQ algorithms in all components
-            for component in ["aegis", "somnus", "logos"]:
-                if component in rules and "pq_ready" in rules[component]:
-                    if "preferred" not in rules[component]:
-                        rules[component]["preferred"] = []
-                    rules[component]["preferred"] = (
-                        rules[component]["pq_ready"] + rules[component]["preferred"]
-                    )
-        
-        # Apply any additional overrides
-        for key, value in overrides.items():
-            if "." in key:
-                # Handle nested keys like "aegis.preferred"
-                parts = key.split(".")
-                current = rules
-                for part in parts[:-1]:
-                    if part not in current:
-                        current[part] = {}
-                    current = current[part]
-                current[parts[-1]] = value
-            else:
-                rules[key] = value
-
-        return await self.create(
-            name=name or template_data.name,
-            rules=rules,
-            enforcement_mode=enforcement_mode,
-        )
+        raise self._unsupported("policies.create_from_template")
 
     async def update(self, policy_id: str, updates: Dict[str, Any]) -> Policy:
         """Update an existing policy.
@@ -128,8 +104,7 @@ class PoliciesResource:
         Returns:
             Updated policy
         """
-        data = await self._client._request("PUT", f"/api/policies/{policy_id}", json_data=updates)
-        return Policy(**data)
+        raise self._unsupported("policies.update")
 
     async def delete(self, policy_id: str) -> bool:
         """Delete a policy.
@@ -140,8 +115,7 @@ class PoliciesResource:
         Returns:
             True if successful
         """
-        await self._client._request("DELETE", f"/api/policies/{policy_id}")
-        return True
+        raise self._unsupported("policies.delete")
 
     async def deploy(self, policy_id: str, target_agents: Optional[List[str]] = None) -> Dict[str, Any]:
         """Deploy policy to agents.
@@ -153,9 +127,7 @@ class PoliciesResource:
         Returns:
             Deployment status
         """
-        payload = {"target_agents": target_agents} if target_agents else {}
-        data = await self._client._request("POST", f"/api/policies/{policy_id}/deploy", json_data=payload)
-        return data
+        raise self._unsupported("policies.deploy")
 
     async def rollback(self, policy_id: str, version: Optional[int] = None) -> Policy:
         """Rollback policy to previous version.
@@ -167,9 +139,7 @@ class PoliciesResource:
         Returns:
             Rolled back policy
         """
-        payload = {"version": version} if version else {}
-        data = await self._client._request("POST", f"/api/policies/{policy_id}/rollback", json_data=payload)
-        return Policy(**data)
+        raise self._unsupported("policies.rollback")
 
     async def get_versions(self, policy_id: str) -> List[Dict[str, Any]]:
         """Get policy version history.
@@ -180,8 +150,7 @@ class PoliciesResource:
         Returns:
             List of policy versions
         """
-        data = await self._client._request("GET", f"/api/policies/{policy_id}/versions")
-        return data["versions"]
+        raise self._unsupported("policies.get_versions")
 
     async def validate(self, rules: Dict[str, Any]) -> Dict[str, Any]:
         """Validate policy rules.
@@ -192,9 +161,7 @@ class PoliciesResource:
         Returns:
             Validation results
         """
-        payload = {"rules": rules}
-        data = await self._client._request("POST", "/api/policies/validate", json_data=payload)
-        return data
+        raise self._unsupported("policies.validate")
 
     async def get_templates(self) -> List[PolicyTemplate]:
         """Get available policy templates.
@@ -202,8 +169,9 @@ class PoliciesResource:
         Returns:
             List of policy templates
         """
-        data = await self._client._request("GET", "/api/policies/templates")
-        return [PolicyTemplate(**template) for template in data["templates"]]
+        data = await self._client._request("GET", "/api/compliance-bundles/templates")
+        templates = data.get("templates", [])
+        return [PolicyTemplate(**template) for template in templates]
 
     async def get_template(self, template_id: str) -> PolicyTemplate:
         """Get specific policy template.
@@ -214,20 +182,15 @@ class PoliciesResource:
         Returns:
             Policy template details
         """
-        # In tests, we may not have an API; provide a minimal template shape
-        try:
-            data = await self._client._request("GET", f"/api/policies/templates/{template_id}")
-            return PolicyTemplate(**data)
-        except Exception:
-            return PolicyTemplate(
-                id=f"tpl-{template_id}",
-                name=template_id.upper(),
-                description=f"Template for {template_id}",
-                compliance_framework=template_id,
-                algorithms={
-                    "aegis": {"pq_ready": ["TLS_KYBER768_P256_SHA256"], "preferred": []}
-                },
-            )
+        data = await self._client._request(
+            "GET",
+            "/api/compliance-bundles/templates",
+            params={"id": template_id},
+        )
+        template = data.get("template")
+        if not isinstance(template, dict):
+            raise NotFoundError(f"Template not found: {template_id}", status_code=404)
+        return PolicyTemplate(**template)
 
     async def test_policy(self, policy_id: str, test_scenarios: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Test policy against scenarios.
@@ -239,9 +202,7 @@ class PoliciesResource:
         Returns:
             Test results
         """
-        payload = {"scenarios": test_scenarios}
-        data = await self._client._request("POST", f"/api/policies/{policy_id}/test", json_data=payload)
-        return data
+        raise self._unsupported("policies.test_policy")
 
     async def get_compliance_report(self, policy_id: str, framework: ComplianceFramework) -> Dict[str, Any]:
         """Generate compliance report for policy.
@@ -253,9 +214,7 @@ class PoliciesResource:
         Returns:
             Compliance report
         """
-        params = {"framework": framework}
-        data = await self._client._request("GET", f"/api/policies/{policy_id}/compliance", params=params)
-        return data
+        raise self._unsupported("policies.get_compliance_report")
 
     # Convenience methods for common operations
     async def enable_post_quantum(self, policy_id: str) -> Policy:
@@ -290,7 +249,10 @@ class PoliciesResource:
         Returns:
             Updated policy
         """
-        return await self.update(policy_id, {"enforcement_mode": mode})
+        return await self.update(
+            policy_id,
+            {"enforcement_mode": mode.value if isinstance(mode, PolicyMode) else mode},
+        )
 
     async def clone_policy(self, policy_id: str, new_name: str) -> Policy:
         """Clone an existing policy.

@@ -1,9 +1,18 @@
 """VeliKey data models and types."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Dict, List, Optional, Any
-from pydantic import BaseModel, Field, validator
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def _parse_dt(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.now(timezone.utc)
 
 
 class AgentStatus(str, Enum):
@@ -13,6 +22,7 @@ class AgentStatus(str, Enum):
     UPDATING = "updating"
     ERROR = "error"
     DEGRADED = "degraded"
+    UNKNOWN = "unknown"
 
 
 class PolicyMode(str, Enum):
@@ -42,108 +52,173 @@ class ComplianceFramework(str, Enum):
 
 class Agent(BaseModel):
     """VeliKey agent representation."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
     id: str
-    name: str
-    version: str
-    status: AgentStatus
-    location: str
-    capabilities: List[str]
-    last_heartbeat: datetime
-    uptime: str
+    name: str = "unknown-agent"
+    version: str = "unknown"
+    status: str = AgentStatus.UNKNOWN if hasattr(AgentStatus, "UNKNOWN") else "unknown"
+    location: str = "unknown"
+    capabilities: List[str] = Field(default_factory=list)
+    last_heartbeat: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="lastHeartbeat")
+    uptime: str = "unknown"
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    
-    @validator('last_heartbeat', pre=True)
-    def parse_datetime(cls, v):
-        if isinstance(v, str):
-            return datetime.fromisoformat(v.replace('Z', '+00:00'))
-        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_agent_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        if "id" not in normalized and isinstance(normalized.get("agentId"), str):
+            normalized["id"] = normalized["agentId"]
+        if "name" not in normalized and isinstance(normalized.get("agentId"), str):
+            normalized["name"] = normalized["agentId"]
+        if "last_heartbeat" not in normalized and normalized.get("lastHeartbeat") is not None:
+            normalized["last_heartbeat"] = normalized["lastHeartbeat"]
+        if "location" not in normalized:
+            normalized["location"] = normalized.get("region") or "unknown"
+        if "uptime" not in normalized:
+            normalized["uptime"] = "unknown"
+        if "status" in normalized and isinstance(normalized["status"], str):
+            normalized["status"] = normalized["status"].lower()
+        return normalized
+
+    @field_validator("last_heartbeat", mode="before")
+    @classmethod
+    def parse_last_heartbeat(cls, value: Any) -> datetime:
+        return _parse_dt(value)
 
 
 class Policy(BaseModel):
     """Security policy configuration."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
     id: str
-    name: str
+    name: str = "Unnamed Policy"
     description: Optional[str] = None
-    compliance_framework: ComplianceFramework
-    rules: Dict[str, Any]
+    compliance_framework: Optional[str] = None
+    rules: Dict[str, Any] = Field(default_factory=dict)
     enforcement_mode: PolicyMode = PolicyMode.OBSERVE
-    is_active: bool = True
+    is_active: bool = Field(default=True, alias="isActive")
     version: int = 1
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="createdAt")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="updatedAt")
     created_by: Optional[str] = None
-    
-    @validator('created_at', 'updated_at', pre=True)
-    def parse_datetime(cls, v):
-        if isinstance(v, str):
-            return datetime.fromisoformat(v.replace('Z', '+00:00'))
-        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_policy_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        if "compliance_framework" not in normalized and isinstance(normalized.get("policyType"), str):
+            normalized["compliance_framework"] = normalized["policyType"]
+        if "enforcement_mode" in normalized and isinstance(normalized["enforcement_mode"], str):
+            normalized["enforcement_mode"] = normalized["enforcement_mode"].lower()
+        return normalized
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def parse_policy_timestamps(cls, value: Any) -> datetime:
+        return _parse_dt(value)
 
 
 class PolicyTemplate(BaseModel):
     """Pre-built policy template."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
     id: str
     name: str
-    description: str
-    compliance_framework: ComplianceFramework
-    algorithms: Dict[str, Any]
+    description: str = ""
+    compliance_framework: Optional[str] = None
+    algorithms: Dict[str, Any] = Field(default_factory=dict)
     recommended_for: List[str] = Field(default_factory=list)
 
 
 class UsageMetrics(BaseModel):
     """Customer usage metrics."""
-    agents_deployed: int
-    policies_active: int
-    connections_processed: int
-    bytes_analyzed: int
-    uptime_percentage: float
-    period_start: datetime
-    period_end: datetime
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    agents_deployed: int = 0
+    policies_active: int = 0
+    connections_processed: int = 0
+    bytes_analyzed: int = 0
+    uptime_percentage: float = 0.0
+    period_start: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    period_end: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class HealthScore(BaseModel):
     """Customer health score."""
-    overall_score: int = Field(ge=0, le=100)
-    category_scores: Dict[str, int]
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    overall_score: int = Field(default=0, ge=0, le=100)
+    category_scores: Dict[str, int] = Field(default_factory=dict)
     risk_factors: List[str] = Field(default_factory=list)
     recommendations: List[str] = Field(default_factory=list)
     trend: str = "stable"
-    calculated_at: datetime
+    calculated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class SecurityAlert(BaseModel):
     """Security alert information."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
     id: str
-    title: str
-    description: str
-    severity: AlertSeverity
-    category: str
-    source: str
-    created_at: datetime
+    title: str = ""
+    description: str = ""
+    severity: str = AlertSeverity.INFO
+    category: str = "general"
+    source: str = "axis"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="createdAt")
     resolved: bool = False
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def parse_alert_created_at(cls, value: Any) -> datetime:
+        return _parse_dt(value)
 
 
 class DiagnosticResult(BaseModel):
     """Diagnostic test result."""
-    test_name: str
-    category: str
-    status: str  # "passed", "failed", "warning"
-    message: str
+    test_name: str = ""
+    category: str = "system"
+    status: str = "unknown"  # "passed", "failed", "warning"
+    message: str = ""
     details: Optional[str] = None
     fix_suggestions: List[Dict[str, Any]] = Field(default_factory=list)
-    duration_ms: int
+    duration_ms: int = 0
 
 
 class CustomerInfo(BaseModel):
     """Customer account information."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
     id: str
     email: str
-    company: str
-    plan: str
-    status: str
-    trial_ends_at: Optional[datetime] = None
-    created_at: datetime
+    company: str = ""
+    plan: str = "unknown"
+    status: str = "unknown"
+    trial_ends_at: Optional[datetime] = Field(default=None, alias="trialEndsAt")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="createdAt")
+
+    @field_validator("trial_ends_at", "created_at", mode="before")
+    @classmethod
+    def parse_customer_dates(cls, value: Any) -> Optional[datetime]:
+        if value is None:
+            return None
+        return _parse_dt(value)
 
 
 class SetupResult(BaseModel):
@@ -162,6 +237,16 @@ class SecurityStatus(BaseModel):
     critical_alerts: int
     recommendations: List[str]
     last_updated: datetime
+
+
+class ComplianceValidationResult(BaseModel):
+    """Compliance validation status for a single framework."""
+
+    framework: str
+    compliant: bool
+    score: int = 0
+    issues: List[str] = Field(default_factory=list)
+    evaluated_count: int = 0
 
 
 class PolicyUpdate(BaseModel):
@@ -323,7 +408,7 @@ def create_policy_from_template(
         Policy configuration dictionary
     """
     templates = {
-        ComplianceFramework.SOC2: {
+        "soc2": {
             "name": name or "SOC2 Type II Compliance",
             "compliance_standard": "SOC2 Type II",
             "aegis": {
@@ -332,7 +417,7 @@ def create_policy_from_template(
                 "prohibited": ["TLS 1.0", "TLS 1.1", "SSL V2", "SSL V3"],
             },
         },
-        ComplianceFramework.PCI_DSS: {
+        "pci-dss": {
             "name": name or "PCI DSS 4.0 Compliance", 
             "compliance_standard": "PCI DSS 4.0",
             "aegis": {
@@ -343,7 +428,8 @@ def create_policy_from_template(
         },
         # Add other templates...
     }
-    
-    config = templates.get(template, {})
+
+    normalized_template = template.value if isinstance(template, ComplianceFramework) else str(template).lower()
+    config = templates.get(normalized_template, {})
     config.update(overrides)
     return config
