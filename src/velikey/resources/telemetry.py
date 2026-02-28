@@ -1,9 +1,7 @@
-"""
-Telemetry resource for VeliKey SDK
-"""
+"""Telemetry resource for VeliKey SDK."""
 
-from typing import Dict, Any, Optional, AsyncGenerator
 import asyncio
+from typing import Any, AsyncGenerator, Dict, Optional
 
 class TelemetryResource:
     """Access telemetry and metrics."""
@@ -11,36 +9,40 @@ class TelemetryResource:
     def __init__(self, client):
         self._client = client
     
-    async def get_metrics(self, 
-                         tenant: Optional[str] = None,
-                         time_range: str = '1h') -> Dict[str, Any]:
+    async def get_metrics(
+        self,
+        tenant: Optional[str] = None,
+        time_range: str = "1h",
+    ) -> Dict[str, Any]:
         """Get current metrics."""
-        params = {'time_range': time_range}
+        params = {"period": "current", "timeRange": time_range}
         if tenant:
-            params['tenant'] = tenant
-            
-        response = await self._client._request('GET', '/telemetry/metrics', params=params)
+            params["tenant"] = tenant
+
+        response = await self._client._request("GET", "/api/usage/summary", params=params)
         return response
     
-    async def stream(self, 
-                     agent_id: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
+    async def stream(
+        self,
+        agent_id: Optional[str] = None,
+        interval_s: float = 5.0,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """Stream real-time telemetry data."""
-        # This would typically use WebSocket, but for now we'll simulate with polling
+        # Polling fallback; websocket transport is not currently exposed by Axis.
         while True:
-            params = {}
+            params = {"period": "current"}
             if agent_id:
-                params['agent_id'] = agent_id
-                
+                params["agentId"] = agent_id
+
             try:
-                response = await self._client._request('GET', '/telemetry/stream', params=params)
+                response = await self._client._request("GET", "/api/usage/summary", params=params)
                 yield response
-            except Exception as e:
-                # In real implementation, handle WebSocket errors
-                print(f"Telemetry stream error: {e}")
-                
-            await asyncio.sleep(5)  # Poll every 5 seconds
+            except Exception:
+                yield {"status": "error", "message": "Telemetry poll failed"}
+
+            await asyncio.sleep(max(0.5, interval_s))
     
     async def submit(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Submit telemetry data."""
-        response = await self._client._request('POST', '/telemetry', json=data)
+        response = await self._client._request("POST", "/api/telemetry/ingest", json_data=data)
         return response

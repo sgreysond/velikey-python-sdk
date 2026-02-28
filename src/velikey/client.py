@@ -1,20 +1,26 @@
 """VeliKey Aegis Python Client."""
 
+from __future__ import annotations
+
 import asyncio
-from typing import Dict, List, Optional, Union
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import httpx
-from .models import *
-from .exceptions import *
+
+from .exceptions import AuthenticationError, NotFoundError, RateLimitError, ValidationError, VeliKeyError
+from .models import BulkUpdateResult, CustomerInfo, PolicyUpdate, SecurityStatus, SetupResult
 from .resources import (
     AgentsResource,
-    PoliciesResource,
-    MonitoringResource,
+    BillingResource,
     ComplianceResource,
     DiagnosticsResource,
-    BillingResource,
+    MonitoringResource,
+    PoliciesResource,
+    RolloutsResource,
+    TelemetryResource,
 )
-from . import __version__
+from .version import __version__
 
 
 class AegisClient:
@@ -38,7 +44,8 @@ class AegisClient:
     
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str] = None,
+        session_cookie: Optional[str] = None,
         base_url: str = "https://api.velikey.com",
         timeout: float = 30.0,
         max_retries: int = 3,
@@ -47,25 +54,36 @@ class AegisClient:
         """Initialize the VeliKey client.
         
         Args:
-            api_key: Your VeliKey API key
+            api_key: Your VeliKey API key (bearer token style)
+            session_cookie: Optional NextAuth session cookie value
             base_url: API base URL (default: https://api.velikey.com)
             timeout: Request timeout in seconds
             max_retries: Number of retry attempts for failed requests
             verify_ssl: Whether to verify SSL certificates
         """
+        if not api_key and not session_cookie:
+            raise ValueError("Either api_key or session_cookie must be provided")
+
         self.api_key = api_key
+        self.session_cookie = self._normalize_session_cookie(session_cookie)
         self.base_url = base_url.rstrip("/")
-        
+        self.max_retries = max(0, int(max_retries))
+
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": f"velikey-python-sdk/{__version__}",
+        }
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        if self.session_cookie:
+            headers["Cookie"] = self.session_cookie
+
         self._client = httpx.AsyncClient(
             timeout=timeout,
             verify=verify_ssl,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "User-Agent": f"velikey-python-sdk/{__version__}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
         )
-        
+
         # Initialize resource managers
         self.agents = AgentsResource(self)
         self.policies = PoliciesResource(self)
@@ -73,6 +91,63 @@ class AegisClient:
         self.compliance = ComplianceResource(self)
         self.diagnostics = DiagnosticsResource(self)
         self.billing = BillingResource(self)
+        self.rollouts = RolloutsResource(self)
+        self.telemetry = TelemetryResource(self)
+
+    @staticmethod
+    def _normalize_session_cookie(session_cookie: Optional[str]) -> Optional[str]:
+        if not session_cookie:
+            return None
+        normalized = session_cookie.strip()
+        if "=" in normalized:
+            return normalized
+        return f"next-auth.session-token={normalized}"
+
+    @staticmethod
+    def _extract_error_message(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+
+        if isinstance(payload, dict):
+            for key in ("detail", "error", "message"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+
+        if response.text:
+            return response.text[:500]
+        return f"HTTP {response.status_code}"
+
+    async def _raise_for_status(self, response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+
+        error_detail = self._extract_error_message(response)
+        if response.status_code == 401:
+            raise AuthenticationError(error_detail or "Invalid credentials", status_code=401)
+        if response.status_code == 400:
+            raise ValidationError(error_detail or "Invalid request", status_code=400)
+        if response.status_code == 404:
+            raise NotFoundError(error_detail or "Resource not found", status_code=404)
+        if response.status_code == 429:
+            raise RateLimitError(error_detail or "Rate limit exceeded", status_code=429)
+        raise VeliKeyError(error_detail or f"HTTP {response.status_code}", status_code=response.status_code)
+
+    @staticmethod
+    async def _maybe_sleep_for_retry(response: Optional[httpx.Response], attempt: int) -> None:
+        retry_after = None
+        if response is not None:
+            retry_after_header = response.headers.get("Retry-After")
+            if retry_after_header:
+                try:
+                    retry_after = float(retry_after_header)
+                except ValueError:
+                    retry_after = None
+        if retry_after is None:
+            retry_after = min(2.0, 0.25 * (2 ** attempt))
+        await asyncio.sleep(max(0.0, retry_after))
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -90,10 +165,10 @@ class AegisClient:
         self,
         method: str,
         endpoint: str,
-        params: Optional[Dict] = None,
-        json_data: Optional[Dict] = None,
+        params: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """Make an authenticated request to the API.
         
         Args:
@@ -113,36 +188,44 @@ class AegisClient:
             NotFoundError: Resource not found
             VeliKeyError: Other API errors
         """
+        if "json" in kwargs and json_data is None:
+            json_data = kwargs.pop("json")
+
         url = f"{self.base_url}{endpoint}"
-        
-        try:
-            response = await self._client.request(
-                method=method,
-                url=url,
-                params=params,
-                json=json_data,
-                **kwargs,
-            )
-            
-            # Handle HTTP errors
-            if response.status_code == 401:
-                raise AuthenticationError("Invalid API key or expired token")
-            elif response.status_code == 400:
-                error_detail = response.json().get("detail", "Invalid request")
-                raise ValidationError(error_detail)
-            elif response.status_code == 404:
-                raise NotFoundError("Resource not found")
-            elif response.status_code == 429:
-                raise RateLimitError("Rate limit exceeded")
-            elif response.status_code >= 400:
-                error_detail = response.json().get("detail", f"HTTP {response.status_code}")
-                raise VeliKeyError(error_detail)
-            
-            response.raise_for_status()
-            return response.json()
-            
-        except httpx.RequestError as e:
-            raise VeliKeyError(f"Request failed: {e}")
+        retryable_statuses = {429, 500, 502, 503, 504}
+        last_error: Optional[Exception] = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await self._client.request(
+                    method=method,
+                    url=url,
+                    params=params,
+                    json=json_data,
+                    **kwargs,
+                )
+
+                if response.status_code in retryable_statuses and attempt < self.max_retries:
+                    await self._maybe_sleep_for_retry(response, attempt)
+                    continue
+
+                await self._raise_for_status(response)
+
+                if not response.content:
+                    return {}
+                try:
+                    parsed = response.json()
+                except ValueError:
+                    return {"raw": response.text}
+                return parsed if isinstance(parsed, dict) else {"data": parsed}
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RequestError) as error:
+                last_error = error
+                if attempt >= self.max_retries:
+                    break
+                await self._maybe_sleep_for_retry(None, attempt)
+                continue
+
+        raise VeliKeyError(f"Request failed after retries: {last_error}")
 
     async def get_health(self) -> Dict[str, str]:
         """Get API health status.
@@ -150,7 +233,10 @@ class AegisClient:
         Returns:
             Health status information
         """
-        return await self._request("GET", "/health")
+        try:
+            return await self._request("GET", "/api/healthz")
+        except VeliKeyError:
+            return await self._request("GET", "/health")
 
     async def get_customer_info(self) -> CustomerInfo:
         """Get current customer information.
@@ -158,8 +244,9 @@ class AegisClient:
         Returns:
             Customer account information
         """
-        data = await self._request("GET", "/api/customers/profile")
-        return CustomerInfo(**data)
+        data = await self._request("GET", "/api/user/profile")
+        payload = data.get("user", data)
+        return CustomerInfo(**payload)
 
     # Convenience methods for common operations
     async def quick_setup(
@@ -174,7 +261,16 @@ class AegisClient:
             "enforcementMode": enforcement_mode,
             "postQuantum": post_quantum,
         }
-        data = await self._request("POST", "/api/setup/quick", json_data=payload)
+        try:
+            data = await self._request("POST", "/api/setup/quick", json_data=payload)
+        except NotFoundError as error:
+            raise VeliKeyError(
+                (
+                    "Unsupported operation: quick_setup. "
+                    "Axis does not currently expose POST /api/setup/quick."
+                ),
+                status_code=501,
+            ) from error
         return SetupResult(
             policy_id=data.get("policy_id", ""),
             policy_name=data.get("policy_name", ""),
@@ -249,6 +345,27 @@ class AegisClient:
         )
 
 
+class _SyncResourceProxy:
+    """Wrap an async resource and expose sync methods."""
+
+    def __init__(self, resource: Any, runner):
+        self._resource = resource
+        self._runner = runner
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._resource, name)
+        if not callable(attr):
+            return attr
+
+        def sync_wrapper(*args, **kwargs):
+            result = attr(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                return self._runner(result)
+            return result
+
+        return sync_wrapper
+
+
 # Synchronous wrapper for non-async environments
 class AegisClientSync:
     """Synchronous wrapper for AegisClient.
@@ -261,7 +378,7 @@ class AegisClientSync:
     
     def __init__(self, **kwargs):
         self._async_client = AegisClient(**kwargs)
-        self._loop = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _run_async(self, coro):
         """Run async coroutine in sync context."""
@@ -272,41 +389,68 @@ class AegisClientSync:
     def __getattr__(self, name):
         """Proxy attribute access to async client."""
         attr = getattr(self._async_client, name)
-        if hasattr(attr, '__call__'):
+
+        if name in {
+            "agents",
+            "policies",
+            "monitoring",
+            "compliance",
+            "diagnostics",
+            "billing",
+            "rollouts",
+            "telemetry",
+        }:
+            return _SyncResourceProxy(attr, self._run_async)
+
+        if callable(attr):
             def sync_wrapper(*args, **kwargs):
-                return self._run_async(attr(*args, **kwargs))
+                result = attr(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    return self._run_async(result)
+                return result
             return sync_wrapper
         return attr
 
     def close(self):
         """Close the client and event loop."""
-        if self._loop:
+        if self._loop is not None:
             self._loop.run_until_complete(self._async_client.close())
             self._loop.close()
+            self._loop = None
 
 
 # Convenience factory functions
-def create_client(api_key: str, **kwargs) -> AegisClient:
+def create_client(
+    api_key: Optional[str] = None,
+    session_cookie: Optional[str] = None,
+    **kwargs,
+) -> AegisClient:
     """Create an async VeliKey client.
     
     Args:
-        api_key: Your VeliKey API key
+        api_key: Optional VeliKey API key
+        session_cookie: Optional NextAuth session cookie value
         **kwargs: Additional client configuration
         
     Returns:
         Configured AegisClient instance
     """
-    return AegisClient(api_key=api_key, **kwargs)
+    return AegisClient(api_key=api_key, session_cookie=session_cookie, **kwargs)
 
 
-def create_sync_client(api_key: str, **kwargs) -> AegisClientSync:
+def create_sync_client(
+    api_key: Optional[str] = None,
+    session_cookie: Optional[str] = None,
+    **kwargs,
+) -> AegisClientSync:
     """Create a synchronous VeliKey client.
     
     Args:
-        api_key: Your VeliKey API key
+        api_key: Optional VeliKey API key
+        session_cookie: Optional NextAuth session cookie value
         **kwargs: Additional client configuration
         
     Returns:
         Configured AegisClientSync instance
     """
-    return AegisClientSync(api_key=api_key, **kwargs)
+    return AegisClientSync(api_key=api_key, session_cookie=session_cookie, **kwargs)

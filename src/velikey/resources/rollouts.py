@@ -1,8 +1,6 @@
-"""
-Rollout resource for VeliKey SDK
-"""
+"""Rollout resource for VeliKey SDK."""
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 class RolloutsResource:
     """Manage policy rollouts."""
@@ -10,76 +8,78 @@ class RolloutsResource:
     def __init__(self, client):
         self._client = client
     
-    async def plan(self, 
-                   policy_id: str,
-                   canary_percent: Optional[int] = None,
-                   stabilization_window_s: Optional[int] = None,
-                   dry_run: bool = True,
-                   explain: bool = False) -> Dict[str, Any]:
+    async def plan(
+        self,
+        policy_id: str,
+        canary_percent: Optional[int] = None,
+        stabilization_window_s: Optional[int] = None,
+        dry_run: bool = True,
+        explain: bool = False,
+    ) -> Dict[str, Any]:
         """Plan a policy rollout."""
-        data = {'policy_id': policy_id}
+        data = {"policyId": policy_id}
         if canary_percent is not None:
-            data['canary_percent'] = canary_percent
+            data["canaryPercent"] = canary_percent
         if stabilization_window_s is not None:
-            data['stabilization_window_s'] = stabilization_window_s
-            
-        params = {}
+            data["stabilizationWindowS"] = stabilization_window_s
+
         if dry_run:
-            params['dry_run'] = 'true'
+            data["dryRun"] = True
         if explain:
-            params['explain'] = 'true'
-            
+            data["explain"] = True
+
         response = await self._client._request(
-            'POST', 
-            '/ai/rollouts/plan',
-            json=data,
-            params=params
+            "POST",
+            "/api/rollouts/plan",
+            json_data=data,
         )
         return response
     
-    async def apply(self, 
-                    plan_id: str,
-                    idempotency_key: Optional[str] = None,
-                    dry_run: bool = True,
-                    explain: bool = False) -> Dict[str, Any]:
+    async def apply(
+        self,
+        plan_id: str,
+        idempotency_key: Optional[str] = None,
+        dry_run: bool = True,
+        explain: bool = False,
+    ) -> Dict[str, Any]:
         """Apply a rollout plan."""
-        data = {'plan_id': plan_id}
+        data = {"planId": plan_id}
         if idempotency_key:
-            data['idempotency_key'] = idempotency_key
-            
-        params = {}
+            data["idempotencyKey"] = idempotency_key
         if dry_run:
-            params['dry_run'] = 'true'
+            data["dryRun"] = True
         if explain:
-            params['explain'] = 'true'
-            
+            data["explain"] = True
+
         headers = {}
         if idempotency_key:
-            headers['Idempotency-Key'] = idempotency_key
-            
+            headers["Idempotency-Key"] = idempotency_key
+
         response = await self._client._request(
-            'POST', 
-            '/ai/rollouts/apply',
-            json=data,
-            params=params,
+            "POST",
+            "/api/rollouts/apply",
+            json_data=data,
             headers=headers
         )
         return response
     
-    async def rollback(self, 
-                       rollback_token: str,
-                       explain: bool = False) -> Dict[str, Any]:
+    async def rollback(
+        self,
+        rollback_token: str,
+        confirm: bool = True,
+        explain: bool = False,
+    ) -> Dict[str, Any]:
         """Trigger a rollback using a rollback token."""
-        data = {'rollback_token': rollback_token}
-        
-        params = {}
+        data = {"rollbackToken": rollback_token}
+        if confirm:
+            data["confirm"] = True
+            data["confirmation"] = "ROLLBACK"
         if explain:
-            params['explain'] = 'true'
-            
+            data["explain"] = True
+
         response = await self._client._request(
-            'POST', 
-            '/ai/rollouts/rollback',
-            json=data,
-            params=params
+            "POST",
+            "/api/rollouts/rollback",
+            json_data=data,
         )
         return response
