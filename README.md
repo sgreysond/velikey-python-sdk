@@ -22,7 +22,7 @@ pip install "velikey[docs]"       # Documentation generation
 pip install "velikey[all]"        # All optional dependencies
 
 # Install from source
-git clone https://github.com/velikey/velikey-python-sdk.git
+git clone https://github.com/sgreysond/velikey-python-sdk.git
 cd velikey-python-sdk
 pip install -e .
 ```
@@ -599,8 +599,8 @@ pytest -k "test_policy"       # Run policy tests only
 
 ## 📖 Documentation
 
-- **API Reference**: [docs.velikey.com/sdk/python](https://docs.velikey.com/sdk/python)
-- **Examples**: [github.com/velikey/velikey-python-sdk/examples](https://github.com/velikey/velikey-python-sdk/tree/main/examples)
+- **API Reference**: [docs.velikey.com/sdk/python](https://velikey.com/docs/aegis-sdk-python)
+- **Examples**: [github.com/velikey/velikey-python-sdk/examples](https://github.com/sgreysond/velikey-python-sdk/tree/main/examples)
 - **Tutorials**: [docs.velikey.com/tutorials](https://docs.velikey.com/tutorials)
 
 ## 🤝 Contributing
@@ -614,6 +614,6 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 ## 🛟 Support
 
 - **Documentation**: [docs.velikey.com](https://docs.velikey.com)
-- **GitHub Issues**: [github.com/velikey/velikey-python-sdk/issues](https://github.com/velikey/velikey-python-sdk/issues)
+- **GitHub Issues**: [github.com/velikey/velikey-python-sdk/issues](https://github.com/sgreysond/velikey-python-sdk/issues)
 - **Community Forum**: [community.velikey.com](https://community.velikey.com)
 - **Email**: [sdk-support@velikey.com](mailto:sdk-support@velikey.com)

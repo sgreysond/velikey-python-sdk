@@ -56,9 +56,9 @@ docs = [
 
 [project.urls]
 Homepage = "https://velikey.com"
-Documentation = "https://docs.velikey.com/sdk/python"
-Repository = "https://github.com/velikey/velikey-python-sdk"
-Changelog = "https://github.com/velikey/velikey-python-sdk/blob/main/CHANGELOG.md"
+Documentation = "https://velikey.com/docs/aegis-sdk-python"
+Repository = "https://github.com/sgreysond/velikey-python-sdk"
+Changelog = "https://github.com/sgreysond/velikey-python-sdk/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.sdist]
 include = [
