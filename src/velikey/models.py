@@ -79,6 +79,19 @@ class Policy(BaseModel):
             return datetime.fromisoformat(v.replace('Z', '+00:00'))
         return v
 
+    @field_validator("rules", mode="before")
+    @classmethod
+    def normalize_rules(cls, value: Any) -> Dict[str, Any]:
+        # Some live environments may return [] for legacy/empty rule payloads.
+        # Normalize to a mapping so downstream SDK helpers remain stable.
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, list):
+            return {"items": value}
+        return {}
+
 
 class PolicyTemplate(BaseModel):
     """Pre-built policy template."""
