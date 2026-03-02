@@ -599,21 +599,20 @@ pytest -k "test_policy"       # Run policy tests only
 
 ## 📖 Documentation
 
-- **API Reference**: [docs.velikey.com/sdk/python](https://velikey.com/docs/aegis-sdk-python)
-- **Examples**: [github.com/velikey/velikey-python-sdk/examples](https://github.com/sgreysond/velikey-python-sdk/tree/main/examples)
-- **Tutorials**: [docs.velikey.com/tutorials](https://docs.velikey.com/tutorials)
+- **API Reference**: [velikey.com/docs/aegis-sdk-python](https://velikey.com/docs/aegis-sdk-python)
+- **Examples**: [github.com/sgreysond/velikey-python-sdk/tree/main/examples](https://github.com/sgreysond/velikey-python-sdk/tree/main/examples)
+- **Guides**: [velikey.com/docs](https://velikey.com/docs/)
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions! Please see [CONTRIBUTING.md](https://github.com/sgreysond/velikey-python-sdk/blob/main/CONTRIBUTING.md) for guidelines.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
+This project is licensed under the [MIT License](https://opensource.org/license/mit/).
 
 ## 🛟 Support
 
-- **Documentation**: [docs.velikey.com](https://docs.velikey.com)
-- **GitHub Issues**: [github.com/velikey/velikey-python-sdk/issues](https://github.com/sgreysond/velikey-python-sdk/issues)
-- **Community Forum**: [community.velikey.com](https://community.velikey.com)
-- **Email**: [sdk-support@velikey.com](mailto:sdk-support@velikey.com)
+- **Documentation**: [velikey.com/docs](https://velikey.com/docs/)
+- **GitHub Issues**: [github.com/sgreysond/velikey-python-sdk/issues](https://github.com/sgreysond/velikey-python-sdk/issues)
+- **Email**: [support@velikey.com](mailto:support@velikey.com)
