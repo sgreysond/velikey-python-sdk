@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "velikey"
-version = "0.1.0"
+version = "0.1.1"
 description = "VeliKey Aegis Python SDK - Quantum-safe crypto policy management"
 readme = "README.md"
 license = "MIT"
