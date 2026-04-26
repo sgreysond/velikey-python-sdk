@@ -55,6 +55,15 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
+    # Only attempt the actual PyPI upload on a `release: published`
+    # event. workflow_dispatch invocations produce the dist artifact
+    # for inspection but skip the upload step - PyPI Trusted Publishing
+    # is keyed on the workflow ref, and we don't currently have a
+    # 'workflow_dispatch' trusted publisher configured (the original
+    # `release: published` config is the only one we own). Manual
+    # dispatch was failing every run with "no Trusted Publisher
+    # configuration matched" since the v0.1.0 release on 2026-03-01.
+    if: github.event_name == 'release'
 
     steps:
       - uses: actions/checkout@v4
