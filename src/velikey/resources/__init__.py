@@ -10,14 +10,16 @@ from .monitoring import MonitoringResource
 from .compliance import ComplianceResource
 from .diagnostics import DiagnosticsResource
 from .billing import BillingResource
+from .gateways import GatewaysResource
 
 __all__ = [
     'PoliciesResource',
-    'AgentsResource', 
+    'AgentsResource',
     'RolloutsResource',
     'TelemetryResource',
     'MonitoringResource',
     'ComplianceResource',
     'DiagnosticsResource',
     'BillingResource',
+    'GatewaysResource',
 ]

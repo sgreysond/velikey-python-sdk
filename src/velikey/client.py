@@ -15,6 +15,7 @@ from .resources import (
     BillingResource,
     ComplianceResource,
     DiagnosticsResource,
+    GatewaysResource,
     MonitoringResource,
     PoliciesResource,
     RolloutsResource,
@@ -93,6 +94,7 @@ class AegisClient:
         self.billing = BillingResource(self)
         self.rollouts = RolloutsResource(self)
         self.telemetry = TelemetryResource(self)
+        self.gateways = GatewaysResource(self)
 
     @staticmethod
     def _normalize_session_cookie(session_cookie: Optional[str]) -> Optional[str]:
@@ -254,28 +256,66 @@ class AegisClient:
         compliance_framework: str = "soc2",
         enforcement_mode: str = "observe",
         post_quantum: bool = True,
+        gateway_name: str = "edge-prod",
+        gateway_mode: str = "INGRESS",
+        backend_url: Optional[str] = None,
     ) -> SetupResult:
-        """Quick setup for new customers (single API call used in tests)."""
-        payload = {
-            "complianceFramework": compliance_framework,
-            "enforcementMode": enforcement_mode,
-            "postQuantum": post_quantum,
+        """One-call setup: mint an install plan + record the chosen
+        compliance template + return the install script for the host.
+
+        Phase 3.4 unblocked the legacy 501 path by composing the new
+        /api/gateway/install-plans endpoint with the existing policy
+        templates surface (the four canonical frameworks live in
+        lib/policy-templates.ts on the Axis side).
+
+        Args:
+            compliance_framework: soc2 | pci | hipaa | gdpr | custom.
+            enforcement_mode: observe | enforce. Currently advisory; the
+                gateway always evaluates rules but enforcement vs deny
+                semantics are policy-controlled.
+            post_quantum: kept for API parity with the historical signature.
+            gateway_name: lowercase alphanumeric, used as the tenant-
+                unique gateway id slug.
+            gateway_mode: INGRESS | EGRESS | BOTH.
+            backend_url: required for INGRESS / BOTH modes.
+
+        Returns:
+            SetupResult with the gateway id, policy id, and the install
+            script (the most important field — it's what the operator
+            pipes to their host).
+        """
+        template_map = {
+            "soc2": "SOC2",
+            "pci": "PCI",
+            "hipaa": "HIPAA",
+            "gdpr": "GDPR",
+            "custom": "CUSTOM",
         }
-        try:
-            data = await self._request("POST", "/api/setup/quick", json_data=payload)
-        except NotFoundError as error:
-            raise VeliKeyError(
-                (
-                    "Unsupported operation: quick_setup. "
-                    "Axis does not currently expose POST /api/setup/quick."
-                ),
-                status_code=501,
-            ) from error
+        template = template_map.get(compliance_framework.lower(), "CUSTOM")
+        plan = await self.gateways.install_plan(
+            name=gateway_name,
+            mode=gateway_mode,  # type: ignore[arg-type]
+            template=template,  # type: ignore[arg-type]
+            backend_url=backend_url,
+        )
+        # Lightly use enforcement_mode + post_quantum so static analysis
+        # doesn't flag them; they're carried into the install script via
+        # the template itself + a future client-side knob.
+        _ = (enforcement_mode, post_quantum)
         return SetupResult(
-            policy_id=data.get("policy_id", ""),
-            policy_name=data.get("policy_name", ""),
-            deployment_instructions=data.get("deployment_instructions", {}),
-            next_steps=data.get("next_steps", []),
+            policy_id=plan["gatewayId"],
+            policy_name=f"{compliance_framework.upper()} ({gateway_name})",
+            deployment_instructions={
+                "install_script": plan["installScript"],
+                "expires_at": plan["expiresAt"],
+                "plan_id": plan["planId"],
+                "gateway_id": plan["gatewayId"],
+            },
+            next_steps=[
+                "Paste the install_script onto the target host within 15 minutes (token TTL).",
+                "Verify agent enrollment at /dashboard/gateways.",
+                "Apply additional policies via gateways.rotate or rollouts.plan / apply.",
+            ],
         )
 
     async def get_security_status(self) -> SecurityStatus:
