@@ -48,24 +48,35 @@ class TestAegisClient:
                 asyncio.run(client._request("POST", "/test", json_data={"invalid": "data"}))
 
     def test_quick_setup(self, client):
-        """Test quick setup functionality."""
-        with patch.object(client, '_request', new_callable=AsyncMock) as mock_request:
-            mock_request.return_value = {
-                "policy_id": "test-policy-123",
-                "policy_name": "Test Policy",
-                "deployment_instructions": {"helm": "helm install..."},
-                "next_steps": ["Deploy agents", "Verify connectivity"]
+        """Test quick setup functionality.
+
+        quick_setup composes `gateways.install_plan` (Phase 3.4); we mock
+        that resource method so the test doesn't require a live
+        Axis API. Asserts the SetupResult is populated from the install
+        plan response.
+        """
+        with patch.object(client.gateways, 'install_plan', new_callable=AsyncMock) as mock_plan:
+            mock_plan.return_value = {
+                "planId": "gp_test123",
+                "gatewayId": "gw_test456",
+                "installScript": "#!/usr/bin/env bash\necho install\n",
+                "expiresAt": "2099-12-31T23:59:59Z",
             }
-            
+
             result = asyncio.run(client.quick_setup(
                 compliance_framework="soc2",
                 enforcement_mode="observe",
-                post_quantum=True
+                post_quantum=True,
+                gateway_name="e2e-quick-setup",
+                backend_url="https://api.example.com:443",
             ))
-            
-            assert result.policy_id == "test-policy-123"
-            assert result.policy_name == "Test Policy"
-            assert len(result.next_steps) == 2
+
+            assert result.policy_id == "gw_test456"
+            assert result.policy_name.startswith("SOC2")
+            assert result.deployment_instructions["plan_id"] == "gp_test123"
+            assert result.deployment_instructions["gateway_id"] == "gw_test456"
+            assert "install_script" in result.deployment_instructions
+            assert len(result.next_steps) >= 2
 
     def test_security_status(self, client):
         """Test security status retrieval."""

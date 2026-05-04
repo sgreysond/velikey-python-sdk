@@ -45,13 +45,20 @@ def test_sync_client_resource_proxy_executes_coroutines():
     client.close()
 
 
-def test_quick_setup_returns_clear_unsupported_when_route_missing():
+def test_quick_setup_propagates_install_plan_error():
+    """quick_setup composes gateways.install_plan (Phase 3.4 / SDK rewire).
+    When the Axis route is missing, the underlying
+    `gateways.install_plan` call surfaces the original NotFoundError
+    untransformed. The legacy 501 wrapper was removed when the
+    quick_setup path moved off `/api/setup/quick`."""
     client = AegisClient(api_key="test-key", base_url="https://axis.velikey.com")
-    client._request = AsyncMock(side_effect=NotFoundError("missing", status_code=404))
+    client.gateways.install_plan = AsyncMock(
+        side_effect=NotFoundError("missing", status_code=404)
+    )
 
     with pytest.raises(VeliKeyError) as error:
         asyncio.run(client.quick_setup())
-    assert error.value.status_code == 501
+    assert error.value.status_code == 404
 
     asyncio.run(client.close())
 
